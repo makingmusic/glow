@@ -34,7 +34,7 @@ Lint must pass before any PR. The linter config is in `.golangci.yml` and enforc
 
 This is a Go CLI application with two execution modes:
 
-- **CLI mode**: Render a single markdown source (file, URL, stdin) to stdout. Entry path: `main.go` → `executeCLI()`.
+- **CLI mode**: Render a single markdown source (file, URL, stdin) to stdout. If the rendered output is taller than the terminal, automatically opens the TUI pager instead of printing. Entry path: `main.go` → `executeCLI()`.
 - **TUI mode**: Interactive file browser + document pager. Entry path: `main.go` → `runTUI()` → `ui/ui.go`.
 
 ```

@@ -160,8 +160,13 @@ glow -w 60
 
 ### Paging
 
-CLI output can be displayed in your preferred pager with the `-p` flag. This defaults
-to the ANSI-aware `less -r` if `$PAGER` is not explicitly set.
+When the rendered output is taller than your terminal, Glow automatically opens
+it in the built-in TUI pager so you can scroll, search, and navigate. This only
+applies when stdout is a terminal — piped output (e.g., `glow file.md | cat`) is
+always printed directly.
+
+You can also force a specific pager with the `-p` flag, which pipes output
+through `$PAGER` (defaults to `less -r`).
 
 ### Styles
 

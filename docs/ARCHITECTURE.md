@@ -21,7 +21,7 @@ Glow operates in two primary modes with a shared rendering pipeline:
 └──────────────────────────────────────────────────────┘
 ```
 
-**CLI Mode**: Direct rendering of a single source to stdout. The source is resolved (stdin, file, HTTP URL, or GitHub/GitLab API), rendered through Glamour, and output directly or piped through a pager.
+**CLI Mode**: Direct rendering of a single source to stdout. The source is resolved (stdin, file, HTTP URL, or GitHub/GitLab API), rendered through Glamour, and output directly or piped through a pager. When stdout is a terminal and the rendered output exceeds the terminal height, Glow automatically opens the TUI pager instead of printing.
 
 **TUI Mode**: Interactive file browser and document viewer. Launched when no file argument is given or when a directory is passed. Uses the Bubble Tea framework for a full-screen terminal UI.
 
@@ -67,7 +67,9 @@ execute(cmd, args)
             └── Output:
                 ├── --pager → exec $PAGER
                 ├── --tui   → runTUI(path, content)
-                └── default → fmt.Fprint(stdout)
+                └── default:
+                    ├── terminal + output > height → runTUI(path, content)
+                    └── otherwise → fmt.Fprint(stdout)
 ```
 
 ### TUI Mode Path

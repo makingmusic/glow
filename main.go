@@ -334,6 +334,18 @@ func executeCLI(cmd *cobra.Command, src *source, w io.Writer) error {
 		}
 		return runTUI(path, content)
 	default:
+		// If output is taller than terminal, open in TUI pager
+		fd := int(os.Stdout.Fd())
+		if term.IsTerminal(fd) {
+			_, h, sizeErr := term.GetSize(fd)
+			if sizeErr == nil && strings.Count(out, "\n") > h {
+				path := ""
+				if !isURL(src.URL) {
+					path = src.URL
+				}
+				return runTUI(path, content)
+			}
+		}
 		if _, err = fmt.Fprint(w, out); err != nil {
 			return fmt.Errorf("unable to write to writer: %w", err)
 		}

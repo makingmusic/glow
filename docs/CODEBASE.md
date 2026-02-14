@@ -2,7 +2,7 @@
 
 ## Overview
 
-Glow is a terminal-based markdown reader built in Go. It renders markdown with styled output directly in the CLI, supporting both an interactive TUI (Terminal User Interface) for browsing files and a direct CLI mode for rendering single documents. It is part of the [Charm](https://charm.sh) ecosystem.
+Glow is a terminal-based markdown reader built in Go. It renders markdown with styled output directly in the CLI, supporting both an interactive TUI (Terminal User Interface) for browsing files and a direct CLI mode for rendering single documents. When CLI output exceeds the terminal height, Glow automatically opens the TUI pager for comfortable reading. It is part of the [Charm](https://charm.sh) ecosystem.
 
 **Repository:** `github.com/charmbracelet/glow/v2`
 **Language:** Go 1.24+
