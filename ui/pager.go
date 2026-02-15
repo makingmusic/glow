@@ -80,8 +80,13 @@ var (
 )
 
 type (
-	contentRenderedMsg string
-	reloadMsg          struct{}
+	contentRenderedMsg struct {
+		body    string
+		content string
+		width   int
+		seq     int
+	}
+	reloadMsg struct{}
 )
 
 type pagerState int
@@ -116,6 +121,8 @@ type pagerModel struct {
 	lineInput textinput.Model
 
 	watcher *fsnotify.Watcher
+
+	renderSeq int
 }
 
 func newPagerModel(common *commonModel) pagerModel {
@@ -147,14 +154,26 @@ func newPagerModel(common *commonModel) pagerModel {
 }
 
 func (m *pagerModel) setSize(w, h int) {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+
 	m.viewport.Width = w
 	m.viewport.Height = h - statusBarHeight
+	if m.viewport.Height < 1 {
+		m.viewport.Height = 1
+	}
 
 	if m.showHelp {
-		if pagerHelpHeight == 0 {
-			pagerHelpHeight = strings.Count(m.helpView(), "\n")
-		}
+		// Help content can vary based on width, so recalculate every time resize is applied.
+		pagerHelpHeight = strings.Count(m.helpView(), "\n")
 		m.viewport.Height -= (statusBarHeight + pagerHelpHeight)
+	}
+	if m.viewport.Height < 1 {
+		m.viewport.Height = 1
 	}
 }
 
@@ -263,8 +282,28 @@ func (m pagerModel) update(msg tea.Msg) (pagerModel, tea.Cmd) {
 	// Glow has rendered the content
 	case contentRenderedMsg:
 		log.Info("content rendered", "state", m.state)
+		if m.renderSeq > 0 && msg.seq != m.renderSeq {
+			return m, nil
+		}
 
-		m.setContent(string(msg))
+		if msg.seq > 0 && m.renderSeq > 0 {
+			currentRenderWidth := m.effectiveGlamourWidth()
+			if currentRenderWidth > 0 && msg.width != currentRenderWidth {
+				log.Debug("discarding stale rendered content due width mismatch",
+					"msgWidth", msg.width,
+					"currentRenderWidth", currentRenderWidth,
+					"viewportWidth", m.viewport.Width,
+					"renderSeq", m.renderSeq,
+					"msgSeq", msg.seq,
+				)
+				return m, nil
+			}
+		}
+
+		if msg.body != "" {
+			m.currentDocument.Body = msg.body
+		}
+		m.setContent(msg.content)
 		if m.viewport.HighPerformanceRendering {
 			cmds = append(cmds, viewport.Sync(m.viewport))
 		}
@@ -283,7 +322,17 @@ func (m pagerModel) update(msg tea.Msg) (pagerModel, tea.Cmd) {
 	// We've received terminal dimensions, either for the first time or
 	// after a resize
 	case tea.WindowSizeMsg:
-		return m, renderWithGlamour(m, m.currentDocument.Body)
+		if m.currentDocument.Body != "" {
+			m.renderSeq++
+			cmds = append(cmds, renderWithGlamour(m, m.currentDocument.Body))
+		} else if m.currentDocument.localPath != "" {
+			// Initial render path can run before the pager's body cache is populated.
+			// Reload from disk so the first resize can still re-render with content.
+			cmds = append(cmds, loadLocalMarkdown(&m.currentDocument))
+		}
+		if m.viewport.HighPerformanceRendering {
+			cmds = append(cmds, viewport.Sync(m.viewport))
+		}
 
 	case statusMessageTimeoutMsg:
 		// Only transition to browse if we're actually showing a status message.
@@ -515,23 +564,26 @@ func (m pagerModel) View() string {
 }
 
 func (m pagerModel) statusBarView(b *strings.Builder) {
+	statusBarWidth := max(1, m.common.width)
+	padSearchInput := func(s string) string {
+		printableWidth := ansi.PrintableRuneWidth(s)
+		switch {
+		case printableWidth > statusBarWidth:
+			return truncate.StringWithTail(s, uint(statusBarWidth), ellipsis)
+		case printableWidth < statusBarWidth:
+			s += statusBarNoteStyle(strings.Repeat(" ", statusBarWidth-printableWidth))
+		}
+		return s
+	}
+
 	// When in search or jump input mode, replace the entire status bar
 	// with the input prompt (like less/vim).
 	if m.state == pagerStateSearch {
-		fmt.Fprint(b, m.searchInput.View())
-		// Pad to full width
-		inputWidth := ansi.PrintableRuneWidth(m.searchInput.View())
-		if pad := m.common.width - inputWidth; pad > 0 {
-			fmt.Fprint(b, statusBarNoteStyle(strings.Repeat(" ", pad)))
-		}
+		fmt.Fprint(b, padSearchInput(m.searchInput.View()))
 		return
 	}
 	if m.state == pagerStateJumpToLine {
-		fmt.Fprint(b, m.lineInput.View())
-		inputWidth := ansi.PrintableRuneWidth(m.lineInput.View())
-		if pad := m.common.width - inputWidth; pad > 0 {
-			fmt.Fprint(b, statusBarNoteStyle(strings.Repeat(" ", pad)))
-		}
+		fmt.Fprint(b, padSearchInput(m.lineInput.View()))
 		return
 	}
 
@@ -687,26 +739,44 @@ func (m pagerModel) helpView() (s string) {
 // COMMANDS
 
 func renderWithGlamour(m pagerModel, md string) tea.Cmd {
+	width := m.effectiveGlamourWidth()
 	return func() tea.Msg {
 		s, err := glamourRender(m, md)
 		if err != nil {
 			log.Error("error rendering with Glamour", "error", err)
 			return errMsg{err}
 		}
-		return contentRenderedMsg(s)
+		return contentRenderedMsg{
+			body:    md,
+			content: s,
+			width:   width,
+			seq:     m.renderSeq,
+		}
 	}
+}
+
+func (m pagerModel) effectiveGlamourWidth() int {
+	width := m.viewport.Width
+	if width == 0 {
+		width = m.common.width
+	}
+	if width <= 0 {
+		width = 80
+	}
+	if m.common.cfg.GlamourMaxWidth > 0 && int(m.common.cfg.GlamourMaxWidth) < width {
+		width = int(m.common.cfg.GlamourMaxWidth)
+	}
+	return width
 }
 
 // This is where the magic happens.
 func glamourRender(m pagerModel, markdown string) (string, error) {
-	trunc := lipgloss.NewStyle().MaxWidth(m.viewport.Width - lineNumberWidth).Render
-
 	if !config.GlamourEnabled {
 		return markdown, nil
 	}
 
 	isCode := !utils.IsMarkdownFile(m.currentDocument.Note)
-	width := max(0, min(int(m.common.cfg.GlamourMaxWidth), m.viewport.Width)) //nolint:gosec
+	width := m.effectiveGlamourWidth()
 	if isCode {
 		width = 0
 	}
@@ -735,6 +805,14 @@ func glamourRender(m pagerModel, markdown string) (string, error) {
 
 	if isCode {
 		out = strings.TrimSpace(out)
+	}
+
+	trunc := lipgloss.NewStyle().Render
+	if isCode || m.common.cfg.ShowLineNumbers {
+		lineWidth := width - lineNumberWidth
+		if lineWidth > 0 {
+			trunc = lipgloss.NewStyle().MaxWidth(lineWidth).Render
+		}
 	}
 
 	// trim lines

@@ -286,6 +286,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// We've loaded a markdown file's contents for rendering
 		m.pager.currentDocument = *msg
 		body := string(utils.RemoveFrontmatter([]byte(msg.Body)))
+		m.pager.currentDocument.Body = body
+		m.pager.renderSeq++
 		cmds = append(cmds, renderWithGlamour(m.pager, body))
 
 	case contentRenderedMsg:
